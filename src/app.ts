@@ -1,26 +1,33 @@
+import { toNodeHandler } from "better-auth/node";
 import cors from "cors";
 import express from "express";
+import type { createAuth } from "./auth.js";
 import { env } from "./config/env.js";
 import { healthRouter } from "./routes/health.routes.js";
 
-const app = express();
+type AuthInstance = ReturnType<typeof createAuth>;
 
-app.use(
-  cors({
-    origin: env.clientUrl,
-    credentials: true,
-  }),
-);
+export function createApp(auth: AuthInstance) {
+  const app = express();
 
-app.use(express.json({ limit: "1mb" }));
+  app.use(
+    cors({
+      origin: env.clientUrl,
+      credentials: true,
+    }),
+  );
 
-app.use("/api/health", healthRouter);
+  app.all("/api/auth/*", toNodeHandler(auth));
 
-app.use((_req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "API route not found.",
+  app.use(express.json({ limit: "1mb" }));
+  app.use("/api/health", healthRouter);
+
+  app.use((_req, res) => {
+    res.status(404).json({
+      success: false,
+      message: "API route not found.",
+    });
   });
-});
 
-export default app;
+  return app;
+}
