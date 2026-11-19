@@ -1,10 +1,12 @@
-import { APIError } from "better-auth/api";
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import mongoose from "mongoose";
 import { env } from "./config/env.js";
 
-type PublicRole = "customer" | "vendor";
+export type AccountRole = "customer" | "vendor" | "admin";
+
+type PublicRole = Exclude<AccountRole, "admin">;
 
 function isPublicRole(value: unknown): value is PublicRole {
   return value === "customer" || value === "vendor";
@@ -48,6 +50,23 @@ export function createAuth() {
           defaultValue: "",
           input: true,
         },
+        isBlocked: {
+          type: "boolean",
+          required: false,
+          defaultValue: false,
+          input: false,
+        },
+        subscriptionPlan: {
+          type: "string",
+          required: false,
+          defaultValue: "free",
+          input: false,
+        },
+        subscriptionExpiresAt: {
+          type: "date",
+          required: false,
+          input: false,
+        },
       },
     },
 
@@ -84,14 +103,16 @@ export function createAuth() {
               });
             }
 
-            const data = {
-              ...user,
-              role,
-              registrationRole: role,
-              businessName: role === "vendor" ? businessName : "",
+            return {
+              data: {
+                ...user,
+                role,
+                registrationRole: role,
+                businessName: role === "vendor" ? businessName : "",
+                isBlocked: false,
+                subscriptionPlan: "free",
+              },
             };
-
-            return { data };
           },
         },
       },
@@ -109,3 +130,5 @@ export function createAuth() {
       : {}),
   });
 }
+
+export type AuthInstance = ReturnType<typeof createAuth>;
