@@ -4,6 +4,7 @@ import express from "express";
 import type { AuthInstance } from "./auth.js";
 import { env } from "./config/env.js";
 import { createAccountRouter } from "./routes/account.routes.js";
+import { createAdminServiceRouter } from "./routes/admin-service.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { createVendorServiceRouter } from "./routes/vendor-service.routes.js";
 
@@ -23,6 +24,7 @@ export function createApp(auth: AuthInstance) {
   app.use("/api/health", healthRouter);
   app.use("/api/account", createAccountRouter(auth));
   app.use("/api/vendor/services", createVendorServiceRouter(auth));
+  app.use("/api/admin/services", createAdminServiceRouter(auth));
 
   app.use((_req, res) => {
     res.status(404).json({
