@@ -7,10 +7,34 @@ export type AuthenticatedUser = {
   name: string;
   email: string;
   role: AccountRole;
+  subscriptionPlan: "free" | "premium";
 };
 
 function isAccountRole(value: unknown): value is AccountRole {
   return value === "customer" || value === "vendor" || value === "admin";
+}
+
+function hasActivePremiumSubscription(user: Record<string, unknown>): boolean {
+  if (user.subscriptionPlan !== "premium") {
+    return false;
+  }
+
+  const expiresAt = user.subscriptionExpiresAt;
+
+  if (expiresAt === undefined || expiresAt === null) {
+    return true;
+  }
+
+  const expiryTime =
+    expiresAt instanceof Date
+      ? expiresAt.getTime()
+      : typeof expiresAt === "string"
+        ? Date.parse(expiresAt)
+        : typeof expiresAt === "number"
+          ? expiresAt
+          : Number.NaN;
+
+  return Number.isFinite(expiryTime) && expiryTime > Date.now();
 }
 
 function parseAuthenticatedUser(value: unknown): AuthenticatedUser | null {
@@ -34,6 +58,7 @@ function parseAuthenticatedUser(value: unknown): AuthenticatedUser | null {
     name: user.name,
     email: user.email,
     role: user.role,
+    subscriptionPlan: hasActivePremiumSubscription(user) ? "premium" : "free",
   };
 }
 
@@ -61,6 +86,8 @@ export function requireAuth(auth: AuthInstance): RequestHandler {
       const sessionUser = session.user as typeof session.user & {
         role?: unknown;
         isBlocked?: unknown;
+        subscriptionPlan?: unknown;
+        subscriptionExpiresAt?: unknown;
       };
 
       if (sessionUser.isBlocked === true) {
