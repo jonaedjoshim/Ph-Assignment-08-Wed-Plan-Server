@@ -6,6 +6,7 @@ import { env } from "./config/env.js";
 import { createAccountRouter } from "./routes/account.routes.js";
 import { createAdminServiceRouter } from "./routes/admin-service.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
+import { createPublicServiceRouter } from "./routes/public-service.routes.js";
 import { createVendorServiceRouter } from "./routes/vendor-service.routes.js";
 
 export function createApp(auth: AuthInstance) {
@@ -23,6 +24,7 @@ export function createApp(auth: AuthInstance) {
   app.use(express.json({ limit: "1mb" }));
   app.use("/api/health", healthRouter);
   app.use("/api/account", createAccountRouter(auth));
+  app.use("/api/services", createPublicServiceRouter(auth));
   app.use("/api/vendor/services", createVendorServiceRouter(auth));
   app.use("/api/admin/services", createAdminServiceRouter(auth));
 

@@ -1,4 +1,4 @@
-import { model, models, Schema } from "mongoose";
+import { model, models, Schema, type InferSchemaType } from "mongoose";
 
 export const SERVICE_CATEGORIES = [
   "Photography & Videography",
@@ -84,5 +84,7 @@ const serviceSchema = new Schema(
 
 serviceSchema.index({ vendorId: 1, status: 1, createdAt: -1 });
 serviceSchema.index({ status: 1, category: 1, createdAt: -1 });
+
+export type ServiceRecord = InferSchemaType<typeof serviceSchema>;
 
 export const Service = models.Service ?? model("Service", serviceSchema);
