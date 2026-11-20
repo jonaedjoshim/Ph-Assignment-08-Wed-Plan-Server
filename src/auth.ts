@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import mongoose from "mongoose";
 import { env } from "./config/env.js";
@@ -11,6 +11,24 @@ type PublicRole = Exclude<AccountRole, "admin">;
 function isPublicRole(value: unknown): value is PublicRole {
   return value === "customer" || value === "vendor";
 }
+
+function getPasswordPolicyError(password: unknown): string | null {
+  if (typeof password !== "string" || password.length < 6) {
+    return "Password must be at least 6 characters.";
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    return "Password must contain at least one uppercase letter.";
+  }
+
+  if (!/[a-z]/.test(password)) {
+    return "Password must contain at least one lowercase letter.";
+  }
+
+  return null;
+}
+
+const isHttpsDeployment = env.betterAuthUrl.startsWith("https://");
 
 export function createAuth() {
   const database = mongoose.connection.db;
@@ -27,7 +45,22 @@ export function createAuth() {
 
     emailAndPassword: {
       enabled: true,
-      minPasswordLength: 8,
+      minPasswordLength: 6,
+    },
+
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-up/email") {
+          return;
+        }
+
+        const body = ctx.body as { password?: unknown } | undefined;
+        const message = getPasswordPolicyError(body?.password);
+
+        if (message) {
+          throw new APIError("BAD_REQUEST", { message });
+        }
+      }),
     },
 
     user: {
@@ -117,6 +150,17 @@ export function createAuth() {
         },
       },
     },
+
+    ...(isHttpsDeployment
+      ? {
+          advanced: {
+            defaultCookieAttributes: {
+              sameSite: "none" as const,
+              secure: true,
+            },
+          },
+        }
+      : {}),
 
     ...(env.googleClientId && env.googleClientSecret
       ? {

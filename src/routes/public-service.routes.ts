@@ -7,6 +7,7 @@ import {
   type ServiceCategory,
   type ServiceRecord,
 } from "../models/service.model.js";
+import { requireAuth } from "../middleware/auth.middileware.js";
 
 const SORT_OPTIONS = {
   newest: { createdAt: -1, _id: -1 },
@@ -82,7 +83,7 @@ function isValidServiceId(value: string): boolean {
   return /^[a-fA-F0-9]{24}$/.test(value);
 }
 
-export function createPublicServiceRouter(_auth: AuthInstance) {
+export function createPublicServiceRouter(auth: AuthInstance) {
   const router = Router();
 
   router.get("/", async (req, res) => {
@@ -247,7 +248,7 @@ export function createPublicServiceRouter(_auth: AuthInstance) {
     }
   });
 
-  router.get("/:serviceId", async (req, res) => {
+  router.get("/:serviceId", requireAuth(auth), async (req, res) => {
     const { serviceId } = req.params;
 
     if (!isValidServiceId(serviceId)) {
