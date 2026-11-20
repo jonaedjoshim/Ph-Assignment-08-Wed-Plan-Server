@@ -1,4 +1,4 @@
-import { model, models, Schema, type InferSchemaType } from "mongoose";
+import mongoose, { type InferSchemaType } from "mongoose";
 
 export const SERVICE_CATEGORIES = [
   "Photography & Videography",
@@ -22,7 +22,7 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-const serviceSchema = new Schema(
+const serviceSchema = new mongoose.Schema(
   {
     vendorId: {
       type: String,
@@ -87,4 +87,5 @@ serviceSchema.index({ status: 1, category: 1, createdAt: -1 });
 
 export type ServiceRecord = InferSchemaType<typeof serviceSchema>;
 
-export const Service = models.Service ?? model("Service", serviceSchema);
+export const Service =
+  mongoose.models.Service ?? mongoose.model("Service", serviceSchema);

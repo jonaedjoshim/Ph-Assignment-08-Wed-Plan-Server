@@ -1,4 +1,4 @@
-import { model, models, Schema, type InferSchemaType } from "mongoose";
+import mongoose, { type InferSchemaType } from "mongoose";
 
 export const BOOKING_STATUSES = [
   "pending",
@@ -7,10 +7,10 @@ export const BOOKING_STATUSES = [
   "cancelled",
 ] as const;
 
-const bookingSchema = new Schema(
+const bookingSchema = new mongoose.Schema(
   {
     serviceId: {
-      type: Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "Service",
       required: true,
     },
@@ -53,7 +53,13 @@ const bookingSchema = new Schema(
 
 bookingSchema.index(
   { serviceId: 1, eventDate: 1 },
-  { unique: true, name: "unique_service_booking_date" },
+  {
+    unique: true,
+    name: "unique_active_service_booking_date",
+    partialFilterExpression: {
+      status: { $in: ["pending", "accepted"] },
+    },
+  },
 );
 
 bookingSchema.index({ customerId: 1, createdAt: -1 });
@@ -61,4 +67,5 @@ bookingSchema.index({ vendorId: 1, status: 1, eventDate: 1 });
 
 export type BookingRecord = InferSchemaType<typeof bookingSchema>;
 
-export const Booking = models.Booking ?? model("Booking", bookingSchema);
+export const Booking =
+  mongoose.models.Booking ?? mongoose.model("Booking", bookingSchema);

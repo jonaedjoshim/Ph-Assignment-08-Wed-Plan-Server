@@ -8,7 +8,7 @@ import {
   type AuthenticatedUser,
 } from "../middleware/auth.middileware.js";
 import { Service } from "../models/service.model.js";
-import { Booking } from "../models/booking,.model.js";
+import { Booking } from "../models/booking.model.js";
 
 type BookingInput = {
   serviceId: string;

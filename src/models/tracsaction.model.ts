@@ -1,8 +1,8 @@
-import { model, models, Schema, type InferSchemaType } from "mongoose";
+import mongoose, { type InferSchemaType } from "mongoose";
 
 const transactionStatuses = ["paid", "failed"] as const;
 
-const transactionSchema = new Schema(
+const transactionSchema = new mongoose.Schema(
   {
     userId: {
       type: String,
@@ -72,4 +72,5 @@ transactionSchema.index({ status: 1, createdAt: -1 });
 export type TransactionRecord = InferSchemaType<typeof transactionSchema>;
 
 export const Transaction =
-  models.Transaction ?? model("Transaction", transactionSchema);
+  mongoose.models.Transaction ??
+  mongoose.model("Transaction", transactionSchema);
