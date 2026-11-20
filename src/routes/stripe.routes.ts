@@ -10,7 +10,23 @@ import {
 } from "../middleware/auth.middileware.js";
 import { Transaction } from "../models/tracsaction.model.js";
 
-type TransactionStatus = "paid" | "failed";
+type TransactionStatus = "pending" | "paid" | "failed" | "expired";
+type InvoiceStatus = "paid" | "failed";
+type CheckoutFailureStatus = "failed" | "expired";
+
+type TransactionInput = {
+  vendorId: string;
+  stripeSessionId: string | null;
+  stripeInvoiceId: string | null;
+  stripeSubscriptionId: string | null;
+  stripeCustomerId: string | null;
+  amount: number;
+  currency: string;
+  status: TransactionStatus;
+  invoiceNumber: string | null;
+  hostedInvoiceUrl: string | null;
+  paidAt: Date | null;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -22,6 +38,7 @@ function getString(value: unknown): string | null {
   }
 
   const result = value.trim();
+
   return result.length > 0 ? result : null;
 }
 
@@ -45,6 +62,7 @@ function getExpandableId(value: unknown): string | null {
 
 function getUserCollection() {
   const database = mongoose.connection.db;
+
   return database ? database.collection("user") : null;
 }
 
@@ -89,11 +107,13 @@ function toDateFromUnixSeconds(value: unknown): Date | null {
   }
 
   const date = new Date(seconds * 1000);
+
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function getSubscriptionExpiry(subscription: Stripe.Subscription): Date | null {
   const subscriptionRecord = subscription as unknown as Record<string, unknown>;
+
   const directExpiry = toDateFromUnixSeconds(
     subscriptionRecord.current_period_end,
   );
@@ -176,6 +196,7 @@ async function syncSubscriptionUser(
   }
 
   const filter = createUserIdFilter(userId);
+
   const existingUser = await users.findOne(filter, {
     projection: {
       stripeSubscriptionId: 1,
@@ -245,6 +266,7 @@ function isStoredPremiumActive(user: Record<string, unknown>): boolean {
 
 function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
   const invoiceRecord = invoice as unknown as Record<string, unknown>;
+
   const directId = getExpandableId(invoiceRecord.subscription);
 
   if (directId) {
@@ -260,7 +282,70 @@ function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
   return getExpandableId(parent.subscription_details.subscription);
 }
 
-async function handleCheckoutSession(
+async function saveTransaction(input: TransactionInput): Promise<void> {
+  const keys: Record<string, string>[] = [];
+
+  if (input.stripeSessionId) {
+    keys.push({ stripeSessionId: input.stripeSessionId });
+  }
+
+  if (input.stripeInvoiceId) {
+    keys.push({ stripeInvoiceId: input.stripeInvoiceId });
+  }
+
+  if (keys.length === 0) {
+    return;
+  }
+
+  const filter = { $or: keys } as never;
+  const existing = await Transaction.findOne(filter).exec();
+
+  if (existing?.status === "paid" && input.status !== "paid") {
+    return;
+  }
+
+  const set: Record<string, unknown> = {
+    vendorId: input.vendorId,
+    plan: "premium",
+    amount: input.amount,
+    currency: input.currency,
+    status: input.status,
+    paidAt: input.paidAt,
+  };
+
+  if (input.stripeSessionId) {
+    set.stripeSessionId = input.stripeSessionId;
+  }
+
+  if (input.stripeInvoiceId) {
+    set.stripeInvoiceId = input.stripeInvoiceId;
+  }
+
+  if (input.stripeSubscriptionId) {
+    set.stripeSubscriptionId = input.stripeSubscriptionId;
+  }
+
+  if (input.stripeCustomerId) {
+    set.stripeCustomerId = input.stripeCustomerId;
+  }
+
+  if (input.invoiceNumber) {
+    set.invoiceNumber = input.invoiceNumber;
+  }
+
+  if (input.hostedInvoiceUrl) {
+    set.hostedInvoiceUrl = input.hostedInvoiceUrl;
+  }
+
+  await Transaction.findOneAndUpdate(filter, { $set: set } as never, {
+    upsert: true,
+    new: true,
+    runValidators: true,
+    setDefaultsOnInsert: true,
+  }).exec();
+}
+
+async function handleCheckoutSessionCompleted(
   stripe: Stripe,
   session: Stripe.Checkout.Session,
 ): Promise<void> {
@@ -275,16 +360,64 @@ async function handleCheckoutSession(
   }
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-  const userId =
+
+  const vendorId =
     getString(session.client_reference_id) ??
     getString(session.metadata?.userId) ??
     getString(subscription.metadata.userId);
 
-  if (!userId) {
+  if (!vendorId) {
     return;
   }
 
-  await syncSubscriptionUser(subscription, userId, true);
+  await syncSubscriptionUser(subscription, vendorId, true);
+
+  const isPaid = session.payment_status === "paid";
+
+  await saveTransaction({
+    vendorId,
+    stripeSessionId: session.id,
+    stripeInvoiceId: getExpandableId(session.invoice),
+    stripeSubscriptionId: subscriptionId,
+    stripeCustomerId: getExpandableId(session.customer),
+    amount: getNumber(session.amount_total) ?? 0,
+    currency: getString(session.currency)?.toLowerCase() ?? "usd",
+    status: isPaid ? "paid" : "pending",
+    invoiceNumber: null,
+    hostedInvoiceUrl: null,
+    paidAt: isPaid ? new Date() : null,
+  });
+}
+
+async function handleCheckoutSessionFailure(
+  session: Stripe.Checkout.Session,
+  status: CheckoutFailureStatus,
+): Promise<void> {
+  if (session.mode !== "subscription" || session.metadata?.plan !== "premium") {
+    return;
+  }
+
+  const vendorId =
+    getString(session.client_reference_id) ??
+    getString(session.metadata?.userId);
+
+  if (!vendorId) {
+    return;
+  }
+
+  await saveTransaction({
+    vendorId,
+    stripeSessionId: session.id,
+    stripeInvoiceId: getExpandableId(session.invoice),
+    stripeSubscriptionId: getExpandableId(session.subscription),
+    stripeCustomerId: getExpandableId(session.customer),
+    amount: getNumber(session.amount_total) ?? 0,
+    currency: getString(session.currency)?.toLowerCase() ?? "usd",
+    status,
+    invoiceNumber: null,
+    hostedInvoiceUrl: null,
+    paidAt: null,
+  });
 }
 
 async function handleSubscriptionEvent(
@@ -300,7 +433,7 @@ async function handleSubscriptionEvent(
 async function handleInvoiceEvent(
   stripe: Stripe,
   invoice: Stripe.Invoice,
-  status: TransactionStatus,
+  status: InvoiceStatus,
 ): Promise<void> {
   const invoiceRecord = invoice as unknown as Record<string, unknown>;
   const invoiceId = getString(invoiceRecord.id);
@@ -337,32 +470,21 @@ async function handleInvoiceEvent(
 
   const currency = getString(invoiceRecord.currency)?.toLowerCase() ?? "usd";
 
-  await Transaction.findOneAndUpdate(
-    { stripeInvoiceId: invoiceId },
-    {
-      $set: {
-        userId,
-        stripeInvoiceId: invoiceId,
-        stripeSubscriptionId: subscriptionId,
-        stripeCustomerId:
-          getExpandableId(invoiceRecord.customer) ??
-          getExpandableId(subscription.customer),
-        amount,
-        currency,
-        status,
-        plan: "premium",
-        invoiceNumber: getString(invoiceRecord.number),
-        hostedInvoiceUrl: getString(invoiceRecord.hosted_invoice_url),
-        paidAt: status === "paid" ? new Date() : null,
-      },
-    },
-    {
-      upsert: true,
-      new: true,
-      runValidators: true,
-      setDefaultsOnInsert: true,
-    },
-  );
+  await saveTransaction({
+    vendorId: syncedUserId,
+    stripeSessionId: null,
+    stripeInvoiceId: invoiceId,
+    stripeSubscriptionId: subscriptionId,
+    stripeCustomerId:
+      getExpandableId(invoiceRecord.customer) ??
+      getExpandableId(subscription.customer),
+    amount,
+    currency,
+    status,
+    invoiceNumber: getString(invoiceRecord.number),
+    hostedInvoiceUrl: getString(invoiceRecord.hosted_invoice_url),
+    paidAt: status === "paid" ? new Date() : null,
+  });
 }
 
 async function handleStripeEvent(
@@ -372,17 +494,27 @@ async function handleStripeEvent(
   switch (event.type) {
     case "checkout.session.completed":
     case "checkout.session.async_payment_succeeded":
-      await handleCheckoutSession(
+      await handleCheckoutSessionCompleted(
         stripe,
         event.data.object as Stripe.Checkout.Session,
       );
       return;
-
+    case "checkout.session.async_payment_failed":
+      await handleCheckoutSessionFailure(
+        event.data.object as Stripe.Checkout.Session,
+        "failed",
+      );
+      return;
+    case "checkout.session.expired":
+      await handleCheckoutSessionFailure(
+        event.data.object as Stripe.Checkout.Session,
+        "expired",
+      );
+      return;
     case "customer.subscription.updated":
     case "customer.subscription.deleted":
       await handleSubscriptionEvent(event.data.object as Stripe.Subscription);
       return;
-
     case "invoice.paid":
       await handleInvoiceEvent(
         stripe,
@@ -390,7 +522,6 @@ async function handleStripeEvent(
         "paid",
       );
       return;
-
     case "invoice.payment_failed":
       await handleInvoiceEvent(
         stripe,
@@ -623,6 +754,7 @@ export function createStripeRouter(auth: AuthInstance) {
 
       try {
         const filter = createUserIdFilter(user.id);
+
         const profile = await users.findOne(filter, {
           projection: {
             stripeSubscriptionId: 1,
@@ -673,6 +805,7 @@ export function createStripeRouter(auth: AuthInstance) {
             });
 
         const expiry = getSubscriptionExpiry(updatedSubscription);
+
         const update: Record<string, unknown> = {
           subscriptionCancelAtPeriodEnd: true,
           updatedAt: new Date(),

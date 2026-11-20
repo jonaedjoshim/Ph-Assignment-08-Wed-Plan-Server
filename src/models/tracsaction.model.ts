@@ -1,28 +1,19 @@
 import mongoose, { type InferSchemaType } from "mongoose";
 
-const transactionStatuses = ["paid", "failed"] as const;
+const transactionStatuses = ["pending", "paid", "failed", "expired"] as const;
 
 const transactionSchema = new mongoose.Schema(
   {
-    userId: {
+    vendorId: {
       type: String,
       required: true,
-      index: true,
+      trim: true,
     },
-    stripeInvoiceId: {
+    plan: {
       type: String,
       required: true,
-      unique: true,
-    },
-    stripeSubscriptionId: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    stripeCustomerId: {
-      type: String,
-      default: null,
-      index: true,
+      enum: ["premium"],
+      default: "premium",
     },
     amount: {
       type: Number,
@@ -34,26 +25,42 @@ const transactionSchema = new mongoose.Schema(
       required: true,
       trim: true,
       lowercase: true,
+      default: "usd",
     },
     status: {
       type: String,
       required: true,
       enum: [...transactionStatuses],
+    },
+    stripeSessionId: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+    stripeInvoiceId: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+    stripeSubscriptionId: {
+      type: String,
+      trim: true,
       index: true,
     },
-    plan: {
+    stripeCustomerId: {
       type: String,
-      required: true,
-      enum: ["premium"],
-      default: "premium",
+      trim: true,
+      index: true,
     },
     invoiceNumber: {
       type: String,
-      default: null,
+      trim: true,
     },
     hostedInvoiceUrl: {
       type: String,
-      default: null,
+      trim: true,
     },
     paidAt: {
       type: Date,
@@ -66,7 +73,7 @@ const transactionSchema = new mongoose.Schema(
   },
 );
 
-transactionSchema.index({ userId: 1, createdAt: -1 });
+transactionSchema.index({ vendorId: 1, createdAt: -1 });
 transactionSchema.index({ status: 1, createdAt: -1 });
 
 export type TransactionRecord = InferSchemaType<typeof transactionSchema>;
