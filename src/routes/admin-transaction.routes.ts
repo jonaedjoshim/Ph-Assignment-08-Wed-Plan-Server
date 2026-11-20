@@ -1,9 +1,9 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import mongoose from "mongoose";
 import type { AccountRole, AuthInstance } from "../auth.js";
 import { requireAuth, requireRole } from "../middleware/auth.middileware.js";
 
-type TransactionStatus = "paid" | "failed";
+type TransactionStatus = "pending" | "paid" | "failed" | "expired";
 type TransactionStatusFilter = "all" | TransactionStatus;
 
 type TransactionUser = {
@@ -14,12 +14,36 @@ type TransactionUser = {
   role: AccountRole | "unknown";
 };
 
-const transactionStatusFilters = ["all", "paid", "failed"] as const;
+const transactionStatuses: readonly TransactionStatus[] = [
+  "pending",
+  "paid",
+  "failed",
+  "expired",
+];
+
+const transactionStatusFilters = [
+  "all",
+  "pending",
+  "paid",
+  "failed",
+  "expired",
+] as const;
 
 function isTransactionStatusFilter(
   value: string,
 ): value is TransactionStatusFilter {
   return (transactionStatusFilters as readonly string[]).includes(value);
+}
+
+function toTransactionStatus(value: unknown): TransactionStatus {
+  if (
+    typeof value === "string" &&
+    (transactionStatuses as readonly string[]).includes(value)
+  ) {
+    return value as TransactionStatus;
+  }
+
+  return "pending";
 }
 
 function isAccountRole(value: unknown): value is AccountRole {
@@ -36,6 +60,7 @@ function getString(value: unknown): string | null {
   }
 
   const trimmed = value.trim();
+
   return trimmed.length > 0 ? trimmed : null;
 }
 
@@ -112,6 +137,7 @@ function toHttpsUrl(value: unknown): string | null {
 
   try {
     const url = new URL(stringValue);
+
     return url.protocol === "https:" ? url.toString() : null;
   } catch {
     return null;
@@ -153,10 +179,7 @@ function toTransactionUser(
   };
 }
 
-function sendDatabaseError(
-  response: import("express").Response,
-  error: unknown,
-): void {
+function sendDatabaseError(response: Response, error: unknown): void {
   console.error("Admin transaction request failed.", error);
 
   response.status(500).json({
@@ -180,7 +203,7 @@ export function createAdminTransactionRouter(auth: AuthInstance) {
       ) {
         res.status(400).json({
           success: false,
-          message: "Status must be all, paid, or failed.",
+          message: "Status must be all, pending, paid, failed, or expired.",
         });
         return;
       }
@@ -243,11 +266,12 @@ export function createAdminTransactionRouter(auth: AuthInstance) {
       const pattern = new RegExp(escapeRegex(search), "i");
 
       filter.$or = [
+        { vendorId: pattern },
+        { stripeSessionId: pattern },
         { stripeInvoiceId: pattern },
         { stripeSubscriptionId: pattern },
         { stripeCustomerId: pattern },
         { invoiceNumber: pattern },
-        { userId: pattern },
       ];
     }
 
@@ -257,7 +281,8 @@ export function createAdminTransactionRouter(auth: AuthInstance) {
           .find(filter as never, {
             projection: {
               _id: 1,
-              userId: 1,
+              vendorId: 1,
+              stripeSessionId: 1,
               stripeInvoiceId: 1,
               stripeSubscriptionId: 1,
               stripeCustomerId: 1,
@@ -282,15 +307,16 @@ export function createAdminTransactionRouter(auth: AuthInstance) {
         (document) => document as Record<string, unknown>,
       );
 
-      const userIds = [
+      const vendorIds = [
         ...new Set(
           records
-            .map((record) => getString(record.userId))
-            .filter((userId): userId is string => userId !== null),
+            .map((record) => getString(record.vendorId))
+            .filter((vendorId): vendorId is string => vendorId !== null),
         ),
       ];
 
-      const userAlternatives = createUserIdAlternatives(userIds);
+      const userAlternatives = createUserIdAlternatives(vendorIds);
+
       const userDocuments =
         userAlternatives.length > 0
           ? await users
@@ -319,16 +345,15 @@ export function createAdminTransactionRouter(auth: AuthInstance) {
 
       const transactionList = records
         .map((record) => {
-          const userId = getString(record.userId) ?? "";
+          const vendorId = getString(record.vendorId) ?? "";
           const amount = record.amount;
 
           return {
-            id:
-              getDatabaseId(record._id) ??
-              getString(record.stripeInvoiceId) ??
-              "",
-            userId,
-            user: usersById.get(userId) ?? null,
+            id: getDatabaseId(record._id),
+            userId: vendorId,
+            vendorId,
+            user: usersById.get(vendorId) ?? null,
+            stripeSessionId: getString(record.stripeSessionId) ?? "",
             stripeInvoiceId: getString(record.stripeInvoiceId) ?? "",
             stripeSubscriptionId: getString(record.stripeSubscriptionId) ?? "",
             stripeCustomerId: getString(record.stripeCustomerId),
@@ -339,7 +364,7 @@ export function createAdminTransactionRouter(auth: AuthInstance) {
                 ? amount
                 : 0,
             currency: getString(record.currency)?.toLowerCase() ?? "usd",
-            status: record.status === "failed" ? "failed" : "paid",
+            status: toTransactionStatus(record.status),
             plan: "premium" as const,
             invoiceNumber: getString(record.invoiceNumber),
             hostedInvoiceUrl: toHttpsUrl(record.hostedInvoiceUrl),
