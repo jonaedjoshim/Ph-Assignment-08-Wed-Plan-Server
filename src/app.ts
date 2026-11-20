@@ -19,6 +19,7 @@ import { createCustomerBookingRouter } from "./routes/customer-booking.routes.js
 import { createProfileRouter } from "./routes/profile.routes.js";
 import { createVendorDashboardRouter } from "./routes/vendor-dashboard.routes.js";
 import { createCustomerDashboardRouter } from "./routes/customer-dashboard.routes.js";
+import { createVendorAvailabilityRouter } from "./routes/vendor-availability.routes.js";
 
 export function createApp(auth: AuthInstance) {
   const app = express();
@@ -55,6 +56,7 @@ export function createApp(auth: AuthInstance) {
   app.use("/api/profile", createProfileRouter(auth));
   app.use("/api/vendor/dashboard", createVendorDashboardRouter(auth));
   app.use("/api/customer/dashboard", createCustomerDashboardRouter(auth));
+  app.use("/api/vendor/availability", createVendorAvailabilityRouter(auth));
 
   app.use((_req, res) => {
     res.status(404).json({
