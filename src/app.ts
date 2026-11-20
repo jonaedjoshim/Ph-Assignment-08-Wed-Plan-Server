@@ -16,6 +16,8 @@ import { createVendorServiceRouter } from "./routes/vendor-service.routes.js";
 import { createImageUploadRouter } from "./routes/image-upload.routes.js";
 import { createVendorBookingRouter } from "./routes/vendor-booking.routes.js";
 import { createCustomerBookingRouter } from "./routes/customer-booking.routes.js";
+import { createProfileRouter } from "./routes/profile.routes.js";
+
 
 export function createApp(auth: AuthInstance) {
   const app = express();
@@ -49,6 +51,7 @@ export function createApp(auth: AuthInstance) {
   app.use("/api/uploads", createImageUploadRouter(auth));
   app.use("/api/vendor/bookings", createVendorBookingRouter(auth));
   app.use("/api/customer/bookings", createCustomerBookingRouter(auth));
+  app.use("/api/profile", createProfileRouter(auth));
 
   app.use((_req, res) => {
     res.status(404).json({
