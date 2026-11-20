@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
+import { jwt } from "better-auth/plugins";
 import mongoose from "mongoose";
 import { env } from "./config/env.js";
 
@@ -42,6 +43,19 @@ export function createAuth() {
     secret: env.betterAuthSecret,
     database: mongodbAdapter(database),
     trustedOrigins: [env.clientUrl],
+
+    plugins: [
+      jwt({
+        jwt: {
+          expirationTime: "15m",
+          definePayload: ({ user }) => {
+            const account = user as typeof user & { role?: unknown };
+
+            return { role: account.role };
+          },
+        },
+      }),
+    ],
 
     emailAndPassword: {
       enabled: true,

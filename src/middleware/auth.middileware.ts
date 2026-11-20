@@ -1,6 +1,8 @@
-import { fromNodeHeaders } from "better-auth/node";
-import type { RequestHandler, Response } from "express";
+import { createRemoteJWKSet, jwtVerify } from "jose";
+import mongoose from "mongoose";
+import type { Request, RequestHandler, Response } from "express";
 import type { AccountRole, AuthInstance } from "../auth.js";
+import { env } from "../config/env.js";
 
 export type AuthenticatedUser = {
   id: string;
@@ -9,6 +11,8 @@ export type AuthenticatedUser = {
   role: AccountRole;
   subscriptionPlan: "free" | "premium";
 };
+
+const jwks = createRemoteJWKSet(new URL("/api/auth/jwks", env.betterAuthUrl));
 
 function isAccountRole(value: unknown): value is AccountRole {
   return value === "customer" || value === "vendor" || value === "admin";
@@ -62,20 +66,108 @@ function parseAuthenticatedUser(value: unknown): AuthenticatedUser | null {
   };
 }
 
+function getBearerToken(req: Request): string | null {
+  const header = req.headers.authorization;
+
+  if (!header) {
+    return null;
+  }
+
+  const [scheme, token] = header.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    return null;
+  }
+
+  return token;
+}
+
+async function findUserRecord(
+  userId: string,
+): Promise<Record<string, unknown> | null> {
+  const database = mongoose.connection.db;
+
+  if (!database) {
+    throw new Error("Database is not connected.");
+  }
+
+  const candidates: Record<string, unknown>[] = [
+    { id: userId },
+    { _id: userId },
+  ];
+
+  if (mongoose.isValidObjectId(userId)) {
+    candidates.push({ _id: new mongoose.Types.ObjectId(userId) });
+  }
+
+  return database.collection("user").findOne({ $or: candidates });
+}
+
+function toAuthenticatedUser(
+  userId: string,
+  record: Record<string, unknown>,
+): AuthenticatedUser | null {
+  const role = record.role;
+  const name = record.name;
+  const email = record.email;
+
+  if (
+    !isAccountRole(role) ||
+    typeof name !== "string" ||
+    typeof email !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: userId,
+    name,
+    email,
+    role,
+    subscriptionPlan: hasActivePremiumSubscription(record) ? "premium" : "free",
+  };
+}
+
 export function getAuthenticatedUser(
   response: Response,
 ): AuthenticatedUser | null {
   return parseAuthenticatedUser(response.locals.authenticatedUser);
 }
 
-export function requireAuth(auth: AuthInstance): RequestHandler {
+export function requireAuth(_auth: AuthInstance): RequestHandler {
   return async (req, res, next) => {
-    try {
-      const session = await auth.api.getSession({
-        headers: fromNodeHeaders(req.headers),
-      });
+    const token = getBearerToken(req);
 
-      if (!session) {
+    if (!token) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication is required.",
+      });
+      return;
+    }
+
+    let userId: string;
+
+    try {
+      const { payload } = await jwtVerify(token, jwks);
+
+      if (typeof payload.sub !== "string" || payload.sub.length === 0) {
+        throw new Error("Token subject is missing.");
+      }
+
+      userId = payload.sub;
+    } catch {
+      res.status(401).json({
+        success: false,
+        message: "Your session token is invalid or has expired.",
+      });
+      return;
+    }
+
+    try {
+      const record = await findUserRecord(userId);
+
+      if (!record) {
         res.status(401).json({
           success: false,
           message: "Authentication is required.",
@@ -83,14 +175,7 @@ export function requireAuth(auth: AuthInstance): RequestHandler {
         return;
       }
 
-      const sessionUser = session.user as typeof session.user & {
-        role?: unknown;
-        isBlocked?: unknown;
-        subscriptionPlan?: unknown;
-        subscriptionExpiresAt?: unknown;
-      };
-
-      if (sessionUser.isBlocked === true) {
+      if (record.isBlocked === true) {
         res.status(403).json({
           success: false,
           message: "This account has been blocked.",
@@ -98,7 +183,7 @@ export function requireAuth(auth: AuthInstance): RequestHandler {
         return;
       }
 
-      const user = parseAuthenticatedUser(sessionUser);
+      const user = toAuthenticatedUser(userId, record);
 
       if (!user) {
         res.status(403).json({
