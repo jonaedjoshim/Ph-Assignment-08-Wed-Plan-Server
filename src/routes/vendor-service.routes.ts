@@ -1,13 +1,17 @@
 import { Router, type Response } from "express";
 import mongoose from "mongoose";
 import type { AuthInstance } from "../auth.js";
-
 import {
   SERVICE_CATEGORIES,
   Service,
   type ServiceCategory,
 } from "../models/service.model.js";
-import { AuthenticatedUser, getAuthenticatedUser, requireAuth, requireRole } from "../middleware/auth.middileware.js";
+import {
+  getAuthenticatedUser,
+  requireAuth,
+  requireRole,
+  type AuthenticatedUser,
+} from "../middleware/auth.middileware.js";
 
 type ServiceInput = {
   serviceName: string;
@@ -229,6 +233,14 @@ function getVendorUser(response: Response): AuthenticatedUser | null {
   return user;
 }
 
+async function countActiveServices(vendorId: string): Promise<number> {
+  return Service.countDocuments({
+    vendorId,
+    status: { $in: ["pending", "approved"] },
+    isActive: { $ne: false },
+  }).exec();
+}
+
 function sendDatabaseError(response: Response, error: unknown): void {
   if (error instanceof mongoose.Error.ValidationError) {
     response.status(400).json({
@@ -295,11 +307,8 @@ export function createVendorServiceRouter(auth: AuthInstance) {
     }
 
     try {
-      if (user.subscriptionPlan === "free") {
-        const activeServiceCount = await Service.countDocuments({
-          vendorId: user.id,
-          status: { $in: ["pending", "approved"] },
-        });
+      if (user.subscriptionPlan !== "premium") {
+        const activeServiceCount = await countActiveServices(user.id);
 
         if (activeServiceCount >= 3) {
           res.status(403).json({
@@ -363,11 +372,11 @@ export function createVendorServiceRouter(auth: AuthInstance) {
         return;
       }
 
-      if (service.status === "rejected" && user.subscriptionPlan === "free") {
-        const activeServiceCount = await Service.countDocuments({
-          vendorId: user.id,
-          status: { $in: ["pending", "approved"] },
-        });
+      if (
+        service.status === "rejected" &&
+        user.subscriptionPlan !== "premium"
+      ) {
+        const activeServiceCount = await countActiveServices(user.id);
 
         if (activeServiceCount >= 3) {
           res.status(403).json({

@@ -7,7 +7,6 @@ import {
   type ServiceCategory,
   type ServiceRecord,
 } from "../models/service.model.js";
-import { requireAuth } from "../middleware/auth.middileware.js";
 
 const SORT_OPTIONS = {
   newest: { createdAt: -1, _id: -1 },
@@ -83,7 +82,7 @@ function isValidServiceId(value: string): boolean {
   return /^[a-fA-F0-9]{24}$/.test(value);
 }
 
-export function createPublicServiceRouter(auth: AuthInstance) {
+export function createPublicServiceRouter(_auth: AuthInstance) {
   const router = Router();
 
   router.get("/", async (req, res) => {
@@ -183,6 +182,7 @@ export function createPublicServiceRouter(auth: AuthInstance) {
 
     const filter: mongoose.QueryFilter<ServiceRecord> = {
       status: "approved",
+      isActive: { $ne: false },
     };
 
     if (category) {
@@ -247,7 +247,7 @@ export function createPublicServiceRouter(auth: AuthInstance) {
     }
   });
 
-  router.get("/:serviceId", requireAuth(auth), async (req, res) => {
+  router.get("/:serviceId", async (req, res) => {
     const { serviceId } = req.params;
 
     if (!isValidServiceId(serviceId)) {
@@ -262,6 +262,7 @@ export function createPublicServiceRouter(auth: AuthInstance) {
       const service = await Service.findOne({
         _id: serviceId,
         status: "approved",
+        isActive: { $ne: false },
       })
         .select(
           "vendorId serviceName category description price location images createdAt",

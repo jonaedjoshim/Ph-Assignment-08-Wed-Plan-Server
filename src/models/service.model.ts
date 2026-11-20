@@ -75,6 +75,12 @@ const serviceSchema = new mongoose.Schema(
       default: "pending",
       index: true,
     },
+    isActive: {
+      type: Boolean,
+      required: true,
+      default: true,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -82,8 +88,8 @@ const serviceSchema = new mongoose.Schema(
   },
 );
 
-serviceSchema.index({ vendorId: 1, status: 1, createdAt: -1 });
-serviceSchema.index({ status: 1, category: 1, createdAt: -1 });
+serviceSchema.index({ vendorId: 1, status: 1, isActive: 1, createdAt: -1 });
+serviceSchema.index({ status: 1, isActive: 1, category: 1, createdAt: -1 });
 
 export type ServiceRecord = InferSchemaType<typeof serviceSchema>;
 

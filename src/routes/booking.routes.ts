@@ -188,12 +188,13 @@ export function createBookingRouter(auth: AuthInstance) {
       const service = await Service.findOne({
         _id: parsed.data.serviceId,
         status: "approved",
+        isActive: { $ne: false },
       }).select("_id vendorId");
 
       if (!service) {
         res.status(404).json({
           success: false,
-          message: "Approved service not found.",
+          message: "Approved active service not found.",
         });
         return;
       }
@@ -210,6 +211,7 @@ export function createBookingRouter(auth: AuthInstance) {
       const existingBooking = await Booking.exists({
         serviceId: service._id,
         eventDate: parsed.data.eventDate,
+        status: { $in: ["pending", "accepted"] },
       });
 
       if (existingBooking) {
