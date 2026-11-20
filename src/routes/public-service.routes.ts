@@ -24,6 +24,7 @@ type VendorSummary = {
   id: string;
   name: string;
   businessName: string | null;
+  isPremium: boolean;
 };
 
 function isServiceCategory(value: string): value is ServiceCategory {
@@ -92,6 +93,18 @@ function isValidObjectId(value: string): boolean {
   return /^[a-fA-F0-9]{24}$/.test(value);
 }
 
+function isPremiumActive(plan: unknown, expiresAt: unknown): boolean {
+  if (plan !== "premium") {
+    return false;
+  }
+
+  if (!(expiresAt instanceof Date)) {
+    return true;
+  }
+
+  return expiresAt.getTime() > Date.now();
+}
+
 async function findVendors(
   vendorIds: string[],
 ): Promise<Map<string, VendorSummary>> {
@@ -114,7 +127,13 @@ async function findVendors(
         $or: [{ id: { $in: uniqueIds } }, { _id: { $in: objectIds } }],
       },
       {
-        projection: { id: 1, name: 1, businessName: 1 },
+        projection: {
+          id: 1,
+          name: 1,
+          businessName: 1,
+          subscriptionPlan: 1,
+          subscriptionExpiresAt: 1,
+        },
       },
     )
     .toArray();
@@ -129,6 +148,10 @@ async function findVendors(
       id: typeof user.id === "string" ? user.id : String(user._id),
       name: typeof user.name === "string" ? user.name : "",
       businessName,
+      isPremium: isPremiumActive(
+        user.subscriptionPlan,
+        user.subscriptionExpiresAt,
+      ),
     };
 
     vendors.set(summary.id, summary);
