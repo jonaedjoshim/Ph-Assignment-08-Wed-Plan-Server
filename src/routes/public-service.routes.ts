@@ -17,6 +17,15 @@ const SORT_OPTIONS = {
 
 type SortOption = keyof typeof SORT_OPTIONS;
 
+const PUBLIC_SERVICE_FIELDS =
+  "vendorId serviceName category description price location images createdAt";
+
+type VendorSummary = {
+  id: string;
+  name: string;
+  businessName: string | null;
+};
+
 function isServiceCategory(value: string): value is ServiceCategory {
   return (SERVICE_CATEGORIES as readonly string[]).includes(value);
 }
@@ -79,8 +88,64 @@ function sendDatabaseError(response: Response, error: unknown): void {
   });
 }
 
-function isValidServiceId(value: string): boolean {
+function isValidObjectId(value: string): boolean {
   return /^[a-fA-F0-9]{24}$/.test(value);
+}
+
+async function findVendors(
+  vendorIds: string[],
+): Promise<Map<string, VendorSummary>> {
+  const vendors = new Map<string, VendorSummary>();
+  const uniqueIds = [...new Set(vendorIds.filter(Boolean))];
+  const db = mongoose.connection.db;
+
+  if (uniqueIds.length === 0 || !db) {
+    return vendors;
+  }
+
+  const objectIds = uniqueIds
+    .filter((id) => isValidObjectId(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
+
+  const users = await db
+    .collection("user")
+    .find(
+      {
+        $or: [{ id: { $in: uniqueIds } }, { _id: { $in: objectIds } }],
+      },
+      {
+        projection: { id: 1, name: 1, businessName: 1 },
+      },
+    )
+    .toArray();
+
+  for (const user of users) {
+    const businessName =
+      typeof user.businessName === "string" && user.businessName.trim()
+        ? user.businessName.trim()
+        : null;
+
+    const summary: VendorSummary = {
+      id: typeof user.id === "string" ? user.id : String(user._id),
+      name: typeof user.name === "string" ? user.name : "",
+      businessName,
+    };
+
+    vendors.set(summary.id, summary);
+    vendors.set(String(user._id), summary);
+  }
+
+  return vendors;
+}
+
+function withVendor<T extends { vendorId: unknown }>(
+  service: T,
+  vendors: Map<string, VendorSummary>,
+) {
+  return {
+    ...service,
+    vendor: vendors.get(String(service.vendorId)) ?? null,
+  };
 }
 
 export function createPublicServiceRouter(auth: AuthInstance) {
@@ -222,9 +287,7 @@ export function createPublicServiceRouter(auth: AuthInstance) {
     try {
       const [services, total] = await Promise.all([
         Service.find(filter)
-          .select(
-            "vendorId serviceName category description price location images createdAt",
-          )
+          .select(PUBLIC_SERVICE_FIELDS)
           .sort(SORT_OPTIONS[sort])
           .skip((page - 1) * limit)
           .limit(limit)
@@ -233,9 +296,13 @@ export function createPublicServiceRouter(auth: AuthInstance) {
         Service.countDocuments(filter).exec(),
       ]);
 
+      const vendors = await findVendors(
+        services.map((service) => String(service.vendorId)),
+      );
+
       res.status(200).json({
         success: true,
-        services,
+        services: services.map((service) => withVendor(service, vendors)),
         pagination: {
           page,
           limit,
@@ -251,7 +318,7 @@ export function createPublicServiceRouter(auth: AuthInstance) {
   router.get("/:serviceId", requireAuth(auth), async (req, res) => {
     const { serviceId } = req.params;
 
-    if (!isValidServiceId(serviceId)) {
+    if (!isValidObjectId(serviceId)) {
       res.status(400).json({
         success: false,
         message: "Invalid service ID.",
@@ -265,9 +332,7 @@ export function createPublicServiceRouter(auth: AuthInstance) {
         status: "approved",
         isActive: { $ne: false },
       })
-        .select(
-          "vendorId serviceName category description price location images createdAt",
-        )
+        .select(PUBLIC_SERVICE_FIELDS)
         .lean()
         .exec();
 
@@ -279,9 +344,11 @@ export function createPublicServiceRouter(auth: AuthInstance) {
         return;
       }
 
+      const vendors = await findVendors([String(service.vendorId)]);
+
       res.status(200).json({
         success: true,
-        service,
+        service: withVendor(service, vendors),
       });
     } catch (error) {
       sendDatabaseError(res, error);
