@@ -184,6 +184,17 @@ async function handleImageUpload(
   }
 }
 
+function runImageUpload(request: Request, response: Response): void {
+  imageUpload.single("image")(request, response, (error) => {
+    if (error) {
+      sendUploadMiddlewareError(response, error);
+      return;
+    }
+
+    void handleImageUpload(request, response);
+  });
+}
+
 export function createImageUploadRouter(auth: AuthInstance) {
   const router = Router();
 
@@ -191,17 +202,13 @@ export function createImageUploadRouter(auth: AuthInstance) {
     "/",
     requireAuth(auth),
     requireRole("vendor"),
-    (request, response) => {
-      imageUpload.single("image")(request, response, (error) => {
-        if (error) {
-          sendUploadMiddlewareError(response, error);
-          return;
-        }
-
-        void handleImageUpload(request, response);
-      });
-    },
+    runImageUpload,
   );
+
+  // Avatars are available to every authenticated account. Any role may upload
+  // one, but the caller is responsible for persisting the returned URL through
+  // the authenticated profile/auth endpoint.
+  router.post("/avatar", requireAuth(auth), runImageUpload);
 
   return router;
 }

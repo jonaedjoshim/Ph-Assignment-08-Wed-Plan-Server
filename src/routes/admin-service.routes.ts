@@ -9,7 +9,7 @@ import {
 } from "../models/service.model.js";
 
 const filterStatuses = ["all", "pending", "approved", "rejected"] as const;
-const moderationStatuses = ["approved", "rejected"] as const;
+const moderationStatuses = ["pending", "approved", "rejected"] as const;
 
 type FilterStatus = (typeof filterStatuses)[number];
 type ModerationStatus = (typeof moderationStatuses)[number];
@@ -282,7 +282,7 @@ export function createAdminServiceRouter(auth: AuthInstance) {
     ) {
       res.status(400).json({
         success: false,
-        message: 'Status must be either "approved" or "rejected".',
+        message: 'Status must be "pending", "approved", or "rejected".',
       });
       return;
     }
