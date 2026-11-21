@@ -23,7 +23,7 @@ const PUBLIC_SERVICE_FIELDS =
 type VendorSummary = {
   id: string;
   name: string;
-  businessName: string | null;
+  businessName: string;
   isPremium: boolean;
 };
 
@@ -140,9 +140,7 @@ async function findVendors(
 
   for (const user of users) {
     const businessName =
-      typeof user.businessName === "string" && user.businessName.trim()
-        ? user.businessName.trim()
-        : null;
+      typeof user.businessName === "string" ? user.businessName.trim() : "";
 
     const summary: VendorSummary = {
       id: typeof user.id === "string" ? user.id : String(user._id),
