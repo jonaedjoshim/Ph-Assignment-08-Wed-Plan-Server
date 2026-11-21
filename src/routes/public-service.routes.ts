@@ -20,7 +20,7 @@ type SortOption = keyof typeof SORT_OPTIONS;
 const PUBLIC_SERVICE_FIELDS =
   "vendorId serviceName category description price location images createdAt";
 
-type VendorSummary = {
+export type VendorSummary = {
   id: string;
   name: string;
   businessName: string;
@@ -105,7 +105,7 @@ function isPremiumActive(plan: unknown, expiresAt: unknown): boolean {
   return expiresAt.getTime() > Date.now();
 }
 
-async function findVendors(
+export async function findVendors(
   vendorIds: string[],
 ): Promise<Map<string, VendorSummary>> {
   const vendors = new Map<string, VendorSummary>();
@@ -159,7 +159,7 @@ async function findVendors(
   return vendors;
 }
 
-function withVendor<T extends { vendorId: unknown }>(
+export function withVendor<T extends { vendorId: unknown }>(
   service: T,
   vendors: Map<string, VendorSummary>,
 ) {

@@ -20,6 +20,7 @@ import { createProfileRouter } from "./routes/profile.routes.js";
 import { createVendorDashboardRouter } from "./routes/vendor-dashboard.routes.js";
 import { createCustomerDashboardRouter } from "./routes/customer-dashboard.routes.js";
 import { createVendorAvailabilityRouter } from "./routes/vendor-availability.routes.js";
+import { createCustomerFavoriteRouter } from "./routes/customer-favorite.routes.js";
 
 export function createApp(auth: AuthInstance) {
   const app = express();
@@ -53,6 +54,7 @@ export function createApp(auth: AuthInstance) {
   app.use("/api/uploads", createImageUploadRouter(auth));
   app.use("/api/vendor/bookings", createVendorBookingRouter(auth));
   app.use("/api/customer/bookings", createCustomerBookingRouter(auth));
+  app.use("/api/customer/favorites", createCustomerFavoriteRouter(auth));
   app.use("/api/profile", createProfileRouter(auth));
   app.use("/api/vendor/dashboard", createVendorDashboardRouter(auth));
   app.use("/api/customer/dashboard", createCustomerDashboardRouter(auth));
