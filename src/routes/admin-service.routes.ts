@@ -1,4 +1,5 @@
 import { Router, type Response } from "express";
+import mongoose from "mongoose";
 import { AuthInstance } from "../auth.js";
 import { requireAuth, requireRole } from "../middleware/auth.middileware.js";
 import {
@@ -68,6 +69,54 @@ function sendDatabaseError(response: Response, error: unknown): void {
     success: false,
     message: "Unable to complete the service request.",
   });
+}
+
+async function findVendorNames(
+  vendorIds: string[],
+): Promise<Map<string, string>> {
+  const vendorNames = new Map<string, string>();
+  const uniqueIds = [...new Set(vendorIds.filter(Boolean))];
+  const db = mongoose.connection.db;
+
+  if (uniqueIds.length === 0 || !db) {
+    return vendorNames;
+  }
+
+  const objectIds = uniqueIds
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
+
+  const users = await db
+    .collection("user")
+    .find(
+      {
+        $or: [{ id: { $in: uniqueIds } }, { _id: { $in: objectIds } }],
+      },
+      {
+        projection: { id: 1, name: 1, businessName: 1 },
+      },
+    )
+    .toArray();
+
+  for (const user of users) {
+    const displayName =
+      typeof user.businessName === "string" && user.businessName.trim()
+        ? user.businessName.trim()
+        : typeof user.name === "string" && user.name.trim()
+          ? user.name.trim()
+          : null;
+
+    if (!displayName) {
+      continue;
+    }
+
+    const userId = typeof user.id === "string" ? user.id : String(user._id);
+
+    vendorNames.set(userId, displayName);
+    vendorNames.set(String(user._id), displayName);
+  }
+
+  return vendorNames;
 }
 
 export function createAdminServiceRouter(auth: AuthInstance) {
@@ -190,9 +239,19 @@ export function createAdminServiceRouter(auth: AuthInstance) {
         Service.countDocuments(filter).exec(),
       ]);
 
+      const vendorNames = await findVendorNames(
+        services.map((service) => String(service.vendorId)),
+      );
+
+      const servicesWithVendor = services.map((service) => {
+        const vendorName = vendorNames.get(String(service.vendorId));
+
+        return vendorName ? { ...service, vendorName } : { ...service };
+      });
+
       res.status(200).json({
         success: true,
-        services,
+        services: servicesWithVendor,
         pagination: {
           page,
           limit,
