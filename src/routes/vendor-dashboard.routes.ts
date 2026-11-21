@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import mongoose from "mongoose";
 import type { AuthInstance } from "../auth.js";
+import { getActivePlan } from "../lib/subscription-plan.js";
 import { requireAuth, requireRole } from "../middleware/auth.middileware.js";
 
 type BookingStatus = "pending" | "accepted" | "rejected" | "cancelled";
@@ -166,27 +167,6 @@ function toIsoString(value: unknown): string | null {
   }
 
   return null;
-}
-
-function isActivePremium(user: Record<string, unknown> | null): boolean {
-  if (!user || user.subscriptionPlan !== "premium") {
-    return false;
-  }
-
-  const expiresAt = user.subscriptionExpiresAt;
-
-  if (expiresAt === undefined || expiresAt === null) {
-    return true;
-  }
-
-  const expiryTime =
-    expiresAt instanceof Date
-      ? expiresAt.getTime()
-      : typeof expiresAt === "string" || typeof expiresAt === "number"
-        ? new Date(expiresAt).getTime()
-        : Number.NaN;
-
-  return Number.isFinite(expiryTime) && expiryTime > Date.now();
 }
 
 function createRequestHeaders(request: Request): Headers {
@@ -416,7 +396,7 @@ export function createVendorDashboardRouter(auth: AuthInstance) {
             ...bookingCounts,
           },
           subscription: {
-            plan: isActivePremium(user) ? "premium" : "free",
+            plan: getActivePlan(user ?? {}),
             expiresAt: toIsoString(user?.subscriptionExpiresAt),
           },
         },

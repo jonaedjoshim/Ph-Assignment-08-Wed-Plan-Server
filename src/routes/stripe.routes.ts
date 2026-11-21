@@ -8,6 +8,11 @@ import {
   requireAuth,
   requireRole,
 } from "../middleware/auth.middileware.js";
+import {
+  getActivePlan,
+  isPaidPlan,
+  type PaidPlan,
+} from "../lib/subscription-plan.js";
 import { Transaction } from "../models/tracsaction.model.js";
 
 type TransactionStatus = "pending" | "paid" | "failed" | "expired";
@@ -16,6 +21,7 @@ type CheckoutFailureStatus = "failed" | "expired";
 
 type TransactionInput = {
   vendorId: string;
+  plan: PaidPlan;
   stripeSessionId: string | null;
   stripeInvoiceId: string | null;
   stripeSubscriptionId: string | null;
@@ -44,6 +50,13 @@ function getString(value: unknown): string | null {
 
 function getNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getMetadataPlan(
+  metadata: Record<string, string> | null | undefined,
+): PaidPlan | null {
+  const plan = metadata?.plan;
+  return isPaidPlan(plan) ? plan : null;
 }
 
 function getExpandableId(value: unknown): string | null {
@@ -225,8 +238,11 @@ async function syncSubscriptionUser(
     expiry !== null &&
     expiry.getTime() > Date.now();
 
+  const metadataPlan = subscription.metadata?.plan;
+  const paidPlan: PaidPlan = isPaidPlan(metadataPlan) ? metadataPlan : "premium";
+
   const update: Record<string, unknown> = {
-    subscriptionPlan: isActive ? "premium" : "free",
+    subscriptionPlan: isActive ? paidPlan : "free",
     subscriptionExpiresAt: isActive ? expiry : null,
     subscriptionCancelAtPeriodEnd: subscription.cancel_at_period_end === true,
     stripeSubscriptionId: subscription.id,
@@ -239,29 +255,6 @@ async function syncSubscriptionUser(
   });
 
   return result.matchedCount > 0 ? userId : null;
-}
-
-function isStoredPremiumActive(user: Record<string, unknown>): boolean {
-  if (user.subscriptionPlan !== "premium") {
-    return false;
-  }
-
-  const expiresAt = user.subscriptionExpiresAt;
-
-  if (expiresAt === undefined || expiresAt === null) {
-    return true;
-  }
-
-  const expiryTime =
-    expiresAt instanceof Date
-      ? expiresAt.getTime()
-      : typeof expiresAt === "string"
-        ? Date.parse(expiresAt)
-        : typeof expiresAt === "number"
-          ? expiresAt
-          : Number.NaN;
-
-  return Number.isFinite(expiryTime) && expiryTime > Date.now();
 }
 
 function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
@@ -306,7 +299,7 @@ async function saveTransaction(input: TransactionInput): Promise<void> {
 
   const set: Record<string, unknown> = {
     vendorId: input.vendorId,
-    plan: "premium",
+    plan: input.plan,
     amount: input.amount,
     currency: input.currency,
     status: input.status,
@@ -349,7 +342,9 @@ async function handleCheckoutSessionCompleted(
   stripe: Stripe,
   session: Stripe.Checkout.Session,
 ): Promise<void> {
-  if (session.mode !== "subscription" || session.metadata?.plan !== "premium") {
+  const plan = getMetadataPlan(session.metadata);
+
+  if (session.mode !== "subscription" || !plan) {
     return;
   }
 
@@ -376,6 +371,7 @@ async function handleCheckoutSessionCompleted(
 
   await saveTransaction({
     vendorId,
+    plan,
     stripeSessionId: session.id,
     stripeInvoiceId: getExpandableId(session.invoice),
     stripeSubscriptionId: subscriptionId,
@@ -393,7 +389,9 @@ async function handleCheckoutSessionFailure(
   session: Stripe.Checkout.Session,
   status: CheckoutFailureStatus,
 ): Promise<void> {
-  if (session.mode !== "subscription" || session.metadata?.plan !== "premium") {
+  const plan = getMetadataPlan(session.metadata);
+
+  if (session.mode !== "subscription" || !plan) {
     return;
   }
 
@@ -407,6 +405,7 @@ async function handleCheckoutSessionFailure(
 
   await saveTransaction({
     vendorId,
+    plan,
     stripeSessionId: session.id,
     stripeInvoiceId: getExpandableId(session.invoice),
     stripeSubscriptionId: getExpandableId(session.subscription),
@@ -423,7 +422,7 @@ async function handleCheckoutSessionFailure(
 async function handleSubscriptionEvent(
   subscription: Stripe.Subscription,
 ): Promise<void> {
-  if (subscription.metadata.plan !== "premium") {
+  if (!getMetadataPlan(subscription.metadata)) {
     return;
   }
 
@@ -444,8 +443,9 @@ async function handleInvoiceEvent(
   }
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const plan = getMetadataPlan(subscription.metadata);
 
-  if (subscription.metadata.plan !== "premium") {
+  if (!plan) {
     return;
   }
 
@@ -472,6 +472,7 @@ async function handleInvoiceEvent(
 
   await saveTransaction({
     vendorId: syncedUserId,
+    plan,
     stripeSessionId: null,
     stripeInvoiceId: invoiceId,
     stripeSubscriptionId: subscriptionId,
@@ -592,13 +593,30 @@ export function createStripeRouter(auth: AuthInstance) {
     },
   );
 
+  // The webhook above needs the raw body, so JSON parsing is applied only to
+  // this route instead of globally before the Stripe router.
   router.post(
     "/checkout",
+    express.json({ limit: "1mb" }),
     requireAuth(auth),
     requireRole("vendor"),
-    async (_req, res) => {
+    async (req, res) => {
       const user = getAuthenticatedUser(res);
-      const premiumPriceId = env.stripePremiumPriceId;
+      const requestedPlan = isRecord(req.body) ? req.body.plan : undefined;
+
+      if (!isPaidPlan(requestedPlan)) {
+        res.status(400).json({
+          success: false,
+          message: "A valid paid plan is required.",
+        });
+        return;
+      }
+
+      const plan: PaidPlan = requestedPlan;
+      const priceId =
+        plan === "starter"
+          ? env.stripeStarterPriceId
+          : env.stripePremiumPriceId;
 
       if (!user) {
         res.status(401).json({
@@ -608,10 +626,10 @@ export function createStripeRouter(auth: AuthInstance) {
         return;
       }
 
-      if (!stripe || !premiumPriceId) {
+      if (!stripe || !priceId) {
         res.status(503).json({
           success: false,
-          message: "Stripe Premium checkout is not configured.",
+          message: `Stripe ${plan === "starter" ? "Starter" : "Premium"} checkout is not configured.`,
         });
         return;
       }
@@ -654,15 +672,15 @@ export function createStripeRouter(auth: AuthInstance) {
           return;
         }
 
-        if (isStoredPremiumActive(account)) {
+        if (getActivePlan(account) !== "free") {
           res.status(409).json({
             success: false,
-            message: "This account already has an active Premium plan.",
+            message: "This account already has an active paid plan.",
           });
           return;
         }
 
-        const price = await stripe.prices.retrieve(premiumPriceId);
+        const price = await stripe.prices.retrieve(priceId);
 
         if (!price.active || !price.recurring) {
           res.status(503).json({
@@ -678,17 +696,17 @@ export function createStripeRouter(auth: AuthInstance) {
 
         const session = await stripe.checkout.sessions.create({
           mode: "subscription",
-          line_items: [{ price: premiumPriceId, quantity: 1 }],
+          line_items: [{ price: priceId, quantity: 1 }],
           success_url: `${clientBaseUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${clientBaseUrl}/payment/cancel`,
           client_reference_id: user.id,
           metadata: {
-            plan: "premium",
+            plan,
             userId: user.id,
           },
           subscription_data: {
             metadata: {
-              plan: "premium",
+              plan,
               userId: user.id,
             },
           },
@@ -776,7 +794,7 @@ export function createStripeRouter(auth: AuthInstance) {
         if (!subscriptionId) {
           res.status(404).json({
             success: false,
-            message: "No Premium subscription was found.",
+            message: "No paid subscription was found.",
           });
           return;
         }
@@ -824,13 +842,13 @@ export function createStripeRouter(auth: AuthInstance) {
           subscriptionCancelAtPeriodEnd: true,
           subscriptionExpiresAt: expiry?.toISOString() ?? null,
           message:
-            "Premium will remain active until the current billing period ends.",
+            "Your paid plan will remain active until the current billing period ends.",
         });
       } catch (error) {
         console.error("Stripe subscription cancellation failed.", error);
         res.status(502).json({
           success: false,
-          message: "Unable to cancel the Premium subscription.",
+          message: "Unable to cancel the paid subscription.",
         });
       }
     },

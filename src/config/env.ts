@@ -22,6 +22,8 @@ const stripeWebhookSecret =
   process.env.STRIPE_WEBHOOK_SECRET?.trim() || undefined;
 const stripePremiumPriceId =
   process.env.STRIPE_PREMIUM_PRICE_ID?.trim() || undefined;
+const stripeStarterPriceId =
+  process.env.STRIPE_STARTER_PRICE_ID?.trim() || undefined;
 
 if (!mongodbUri) {
   throw new Error("MONGODB_URI is required.");
@@ -56,4 +58,5 @@ export const env = {
   stripeSecretKey,
   stripeWebhookSecret,
   stripePremiumPriceId,
+  stripeStarterPriceId,
 };

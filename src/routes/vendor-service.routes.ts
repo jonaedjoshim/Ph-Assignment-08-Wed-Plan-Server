@@ -2,6 +2,10 @@ import { Router, type Response } from "express";
 import mongoose from "mongoose";
 import type { AuthInstance } from "../auth.js";
 import {
+  getServiceLimit,
+  PLAN_LABELS,
+} from "../lib/subscription-plan.js";
+import {
   SERVICE_CATEGORIES,
   Service,
   type ServiceCategory,
@@ -307,14 +311,16 @@ export function createVendorServiceRouter(auth: AuthInstance) {
     }
 
     try {
-      if (user.subscriptionPlan !== "premium") {
+      const serviceLimit = getServiceLimit(user.subscriptionPlan);
+
+      if (serviceLimit !== null) {
         const activeServiceCount = await countActiveServices(user.id);
 
-        if (activeServiceCount >= 3) {
+        if (activeServiceCount >= serviceLimit) {
           res.status(403).json({
             success: false,
             code: "SERVICE_LIMIT_REACHED",
-            message: "Free vendors can have at most 3 active services.",
+            message: `${PLAN_LABELS[user.subscriptionPlan]} vendors can have at most ${serviceLimit} active services.`,
           });
           return;
         }
@@ -372,18 +378,16 @@ export function createVendorServiceRouter(auth: AuthInstance) {
         return;
       }
 
-      if (
-        service.status === "rejected" &&
-        user.subscriptionPlan !== "premium"
-      ) {
+      const serviceLimit = getServiceLimit(user.subscriptionPlan);
+
+      if (service.status === "rejected" && serviceLimit !== null) {
         const activeServiceCount = await countActiveServices(user.id);
 
-        if (activeServiceCount >= 3) {
+        if (activeServiceCount >= serviceLimit) {
           res.status(403).json({
             success: false,
             code: "SERVICE_LIMIT_REACHED",
-            message:
-              "You cannot resubmit this service while your free-plan limit is reached.",
+            message: `You cannot resubmit this service while your ${PLAN_LABELS[user.subscriptionPlan].toLowerCase()}-plan limit is reached.`,
           });
           return;
         }

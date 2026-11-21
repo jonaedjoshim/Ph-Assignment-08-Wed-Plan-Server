@@ -1,6 +1,7 @@
 import { Router, type Response } from "express";
 import mongoose from "mongoose";
 import type { AccountRole, AuthInstance } from "../auth.js";
+import { isPaidPlan, type PaidPlan } from "../lib/subscription-plan.js";
 import { requireAuth, requireRole } from "../middleware/auth.middileware.js";
 
 type TransactionStatus = "pending" | "paid" | "failed" | "expired";
@@ -44,6 +45,10 @@ function toTransactionStatus(value: unknown): TransactionStatus {
   }
 
   return "pending";
+}
+
+function toPaidPlan(value: unknown): PaidPlan {
+  return isPaidPlan(value) ? value : "premium";
 }
 
 function isAccountRole(value: unknown): value is AccountRole {
@@ -365,7 +370,7 @@ export function createAdminTransactionRouter(auth: AuthInstance) {
                 : 0,
             currency: getString(record.currency)?.toLowerCase() ?? "usd",
             status: toTransactionStatus(record.status),
-            plan: "premium" as const,
+            plan: toPaidPlan(record.plan),
             invoiceNumber: getString(record.invoiceNumber),
             hostedInvoiceUrl: toHttpsUrl(record.hostedInvoiceUrl),
             paidAt: toIsoString(record.paidAt),

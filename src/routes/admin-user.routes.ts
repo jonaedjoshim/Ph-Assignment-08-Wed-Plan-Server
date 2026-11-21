@@ -1,6 +1,7 @@
 import { Router, type Response } from "express";
 import mongoose from "mongoose";
 import type { AuthInstance, AccountRole } from "../auth.js";
+import { getActivePlan } from "../lib/subscription-plan.js";
 import {
   getAuthenticatedUser,
   requireAuth,
@@ -98,7 +99,7 @@ function toAdminUser(user: Record<string, unknown>) {
     isBlocked: user.isBlocked === true,
     emailVerified: user.emailVerified === true,
     image: typeof user.image === "string" ? user.image : null,
-    subscriptionPlan: user.subscriptionPlan === "premium" ? "premium" : "free",
+    subscriptionPlan: getActivePlan(user),
     subscriptionExpiresAt: toIsoString(user.subscriptionExpiresAt),
     createdAt: toIsoString(user.createdAt),
   };
@@ -382,6 +383,106 @@ export function createAdminUserRouter(auth: AuthInstance) {
           isBlocked,
         },
         message: isBlocked ? "User blocked." : "User unblocked.",
+      });
+    } catch (error) {
+      sendDatabaseError(res, error);
+    }
+  });
+
+  router.patch("/:userId/role", async (req, res) => {
+    const userId = req.params.userId;
+
+    if (
+      userId.length === 0 ||
+      userId.length > 200 ||
+      userId.trim() !== userId
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid user ID.",
+      });
+      return;
+    }
+
+    if (
+      !isRecord(req.body) ||
+      Object.keys(req.body).length !== 1 ||
+      !isAccountRole(req.body.role)
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Role must be customer, vendor, or admin.",
+      });
+      return;
+    }
+
+    const admin = getAuthenticatedUser(res);
+
+    if (!admin) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication is required.",
+      });
+      return;
+    }
+
+    const role = req.body.role;
+
+    if (userId === admin.id && role !== "admin") {
+      res.status(403).json({
+        success: false,
+        code: "CANNOT_CHANGE_OWN_ROLE",
+        message: "You cannot change your own admin role.",
+      });
+      return;
+    }
+
+    const users = getUserCollection(res);
+    if (!users) return;
+
+    const userFilter = createUserIdFilter(userId);
+
+    try {
+      const targetUser = await users.findOne(userFilter, {
+        projection: {
+          _id: 1,
+          id: 1,
+        },
+      });
+
+      if (!targetUser) {
+        res.status(404).json({
+          success: false,
+          message: "User not found.",
+        });
+        return;
+      }
+
+      const targetUserId = getUserId(targetUser);
+
+      if (targetUserId === admin.id && role !== "admin") {
+        res.status(403).json({
+          success: false,
+          code: "CANNOT_CHANGE_OWN_ROLE",
+          message: "You cannot change your own admin role.",
+        });
+        return;
+      }
+
+      await users.updateOne(userFilter, {
+        $set: {
+          role,
+          updatedAt: new Date(),
+        },
+      });
+
+      res.status(200).json({
+        success: true,
+        user: {
+          id: targetUserId || userId,
+          role,
+        },
+        message: `User role updated to ${role}.`,
       });
     } catch (error) {
       sendDatabaseError(res, error);

@@ -12,7 +12,7 @@ const transactionSchema = new mongoose.Schema(
     plan: {
       type: String,
       required: true,
-      enum: ["premium"],
+      enum: ["starter", "premium"],
       default: "premium",
     },
     amount: {

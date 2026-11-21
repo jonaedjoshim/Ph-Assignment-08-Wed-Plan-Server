@@ -2,6 +2,10 @@ import { Router, type Response } from "express";
 import mongoose from "mongoose";
 import type { AuthInstance } from "../auth.js";
 import {
+  getServiceLimit,
+  PLAN_LABELS,
+} from "../lib/subscription-plan.js";
+import {
   getAuthenticatedUser,
   requireAuth,
   requireRole,
@@ -146,10 +150,12 @@ export function createVendorAvailabilityRouter(auth: AuthInstance) {
         return;
       }
 
+      const serviceLimit = getServiceLimit(user.subscriptionPlan);
+
       if (
         request.body.isActive &&
         service.isActive === false &&
-        user.subscriptionPlan !== "premium"
+        serviceLimit !== null
       ) {
         const activeServiceCount = await Service.countDocuments({
           vendorId: user.id,
@@ -158,11 +164,11 @@ export function createVendorAvailabilityRouter(auth: AuthInstance) {
           isActive: { $ne: false },
         }).exec();
 
-        if (activeServiceCount >= 3) {
+        if (activeServiceCount >= serviceLimit) {
           response.status(403).json({
             success: false,
             code: "SERVICE_LIMIT_REACHED",
-            message: "Free vendors can have at most 3 active services.",
+            message: `${PLAN_LABELS[user.subscriptionPlan]} vendors can have at most ${serviceLimit} active services.`,
           });
           return;
         }

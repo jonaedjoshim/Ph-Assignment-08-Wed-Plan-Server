@@ -3,42 +3,20 @@ import mongoose from "mongoose";
 import type { Request, RequestHandler, Response } from "express";
 import type { AccountRole, AuthInstance } from "../auth.js";
 import { env } from "../config/env.js";
+import { getActivePlan, type SubscriptionPlan } from "../lib/subscription-plan.js";
 
 export type AuthenticatedUser = {
   id: string;
   name: string;
   email: string;
   role: AccountRole;
-  subscriptionPlan: "free" | "premium";
+  subscriptionPlan: SubscriptionPlan;
 };
 
 const jwks = createRemoteJWKSet(new URL("/api/auth/jwks", env.betterAuthUrl));
 
 function isAccountRole(value: unknown): value is AccountRole {
   return value === "customer" || value === "vendor" || value === "admin";
-}
-
-function hasActivePremiumSubscription(user: Record<string, unknown>): boolean {
-  if (user.subscriptionPlan !== "premium") {
-    return false;
-  }
-
-  const expiresAt = user.subscriptionExpiresAt;
-
-  if (expiresAt === undefined || expiresAt === null) {
-    return true;
-  }
-
-  const expiryTime =
-    expiresAt instanceof Date
-      ? expiresAt.getTime()
-      : typeof expiresAt === "string"
-        ? Date.parse(expiresAt)
-        : typeof expiresAt === "number"
-          ? expiresAt
-          : Number.NaN;
-
-  return Number.isFinite(expiryTime) && expiryTime > Date.now();
 }
 
 function parseAuthenticatedUser(value: unknown): AuthenticatedUser | null {
@@ -62,7 +40,7 @@ function parseAuthenticatedUser(value: unknown): AuthenticatedUser | null {
     name: user.name,
     email: user.email,
     role: user.role,
-    subscriptionPlan: hasActivePremiumSubscription(user) ? "premium" : "free",
+    subscriptionPlan: getActivePlan(user),
   };
 }
 
@@ -124,7 +102,7 @@ function toAuthenticatedUser(
     name,
     email,
     role,
-    subscriptionPlan: hasActivePremiumSubscription(record) ? "premium" : "free",
+    subscriptionPlan: getActivePlan(record),
   };
 }
 
